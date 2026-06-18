@@ -10,6 +10,11 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
 import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 import sys
 
 warnings.filterwarnings("ignore")
@@ -46,6 +51,44 @@ def scan_one(row) -> dict | None:
         return {"代码": code, "名称": name, "K": round(k, 2), "D": round(d, 2), "J": round(j, 2)}
     except Exception:
         return None
+
+
+def send_email(df: pd.DataFrame, today: str):
+    """通过 QQ 邮箱 SMTP 发送结果"""
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    to_email = os.environ.get("TO_EMAIL", "")
+
+    if not smtp_user or not smtp_pass or not to_email:
+        print("\n⚠ 未配置邮箱，跳过发送")
+        return
+
+    j_low = df[df["J"] < -5].sort_values("J")
+    j_oversold = df[(df["J"] >= -5) & (df["J"] < 30)].sort_values("J")
+
+    # 构建 HTML 邮件
+    html = f"""<html><body>
+    <h2>KDJ 超卖扫描 — {today}</h2>
+    <h3>🔴 J < -5 极度超卖 ({len(j_low)} 只)</h3>
+    {j_low.to_html(index=False) if len(j_low) else '<p>无</p>'}
+    <h3>🟡 J < 30 超卖区域 ({len(j_oversold)} 只)</h3>
+    {j_oversold.to_html(index=False) if len(j_oversold) else '<p>无</p>'}
+    <hr><p><small>自动发送 — KDJ Scanner Bot</small></p>
+    </body></html>"""
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"KDJ 超卖扫描结果 — {today}"
+    msg["From"] = smtp_user
+    msg["To"] = to_email
+    msg.attach(MIMEText(html, "html", "utf-8"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=15) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, [to_email], msg.as_string())
+        print(f"\n✅ 邮件已发送到 {to_email}")
+    except Exception as e:
+        print(f"\n❌ 邮件发送失败: {e}")
 
 
 def main():
@@ -115,6 +158,10 @@ def main():
             f.write(f"\n### 🟡 J < 30 ({len(j_oversold)} 只)\n\n")
             if len(j_oversold):
                 f.write(j_oversold.to_markdown(index=False))
+
+    # 发送邮件
+    send_email(df, today)
+
     print("\n完成!")
 
 

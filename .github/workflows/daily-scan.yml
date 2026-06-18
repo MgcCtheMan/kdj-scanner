@@ -25,6 +25,10 @@ jobs:
 
       - name: 运行 KDJ 扫描
         run: python scanner.py
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
 
       - name: 上传结果
         if: always()
