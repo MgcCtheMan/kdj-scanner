@@ -63,8 +63,12 @@ def send_email(df: pd.DataFrame, today: str):
         print("\n⚠ 未配置邮箱，跳过发送")
         return
 
-    j_low = df[df["J"] < -5].sort_values("J")
-    j_oversold = df[(df["J"] >= -5) & (df["J"] < 30)].sort_values("J")
+    if len(df) > 0:
+        j_low = df[df["J"] < -5].sort_values("J")
+        j_oversold = df[(df["J"] >= -5) & (df["J"] < 30)].sort_values("J")
+    else:
+        j_low = df.copy()
+        j_oversold = df.copy()
 
     # 构建 HTML 邮件
     html = f"""<html><body>
@@ -92,17 +96,34 @@ def send_email(df: pd.DataFrame, today: str):
 
 
 def main():
+    try:
+        _main()
+    except Exception as e:
+        import traceback
+        print(f"\n❌ 脚本异常: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def _main():
     today = datetime.now().strftime("%Y-%m-%d %H:%M")
     print(f"=== A股 KDJ 超卖筛选 ===")
     print(f"时间: {today}")
     print(f"并发线程: 8\n")
 
     # 获取 A 股列表
-    print("获取 A 股列表...")
-    stock_df = ak.stock_zh_a_spot_em()
-    stock_df = stock_df[~stock_df["名称"].str.contains("ST|退市|N|C", na=False)]
-    total = len(stock_df)
-    print(f"共 {total} 只待筛选\n")
+    print("获取 A 股列表...", flush=True)
+    try:
+        stock_df = ak.stock_zh_a_spot_em()
+        print(f"  获取到 {len(stock_df)} 只股票", flush=True)
+        stock_df = stock_df[~stock_df["名称"].str.contains("ST|退市|N|C", na=False)]
+        total = len(stock_df)
+        print(f"  过滤后共 {total} 只待筛选\n", flush=True)
+    except Exception as e:
+        print(f"❌ 获取股票列表失败: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
     # 并发扫描
     results = []
@@ -119,13 +140,17 @@ def main():
 
     if not results:
         print("\n未找到符合条件的股票")
-        return
-
-    df = pd.DataFrame(results)
+        df = pd.DataFrame(columns=["代码", "名称", "K", "D", "J"])
+    else:
+        df = pd.DataFrame(results)
 
     # 分类
-    j_low = df[df["J"] < -5].sort_values("J")
-    j_oversold = df[(df["J"] >= -5) & (df["J"] < 30)].sort_values("J")
+    if len(df) > 0:
+        j_low = df[df["J"] < -5].sort_values("J")
+        j_oversold = df[(df["J"] >= -5) & (df["J"] < 30)].sort_values("J")
+    else:
+        j_low = df.copy()
+        j_oversold = df.copy()
 
     # 输出
     def print_section(title, data: pd.DataFrame):
