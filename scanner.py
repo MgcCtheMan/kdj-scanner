@@ -1,23 +1,77 @@
 """
-A股 KDJ 超卖筛选 — GitHub Actions 每日自动版
-并发获取数据，全市场扫描约 15-30 分钟
+A股 KDJ 超卖筛选 — 腾讯云服务器每日自动版
+curl 版：绕过 Python requests TLS 兼容问题
 """
+
+import warnings
+import os
+import sys
+
+warnings.filterwarnings("ignore")
+
+# ===== 用 curl 替代 requests（解决服务器 TLS 握手失败问题）=====
+import subprocess, json, urllib.parse
+
+def _curl_request(url: str, params: dict = None, timeout: int = 15) -> "FakeResponse":
+    """用 subprocess+curl 发 HTTP GET 请求，返回伪 requests.Response"""
+    full_url = url
+    if params:
+        query = urllib.parse.urlencode(params)
+        full_url = f"{url}?{query}"
+
+    # 构建 User-Agent 和 headers
+    cmd = [
+        "curl", "-s", "-m", str(timeout),
+        "-H", "Accept: */*",
+        "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "-H", "Accept-Language: zh-CN,zh;q=0.9",
+        "--compressed",
+        full_url
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+
+    class FakeResponse:
+        def __init__(self, text, status_code):
+            self.text = text
+            self.status_code = status_code
+            self._text = text
+
+        def json(self):
+            return json.loads(self.text)
+
+    if result.returncode == 0 and result.stdout.strip():
+        return FakeResponse(result.stdout, 200)
+    else:
+        raise ConnectionError(f"curl failed: {result.stderr[:200]}")
+
+# Monkey-patch requests 模块，让 akshare 走 curl
+import requests
+_original_get = requests.get
+def _patched_get(url, params=None, timeout=None, **kwargs):
+    t = timeout if isinstance(timeout, (int, float)) else 15
+    return _curl_request(url, params=params, timeout=t)
+
+requests.get = _patched_get
+
+# Monkey-patch Session.get too
+_original_session_get = requests.sessions.Session.get
+def _patched_session_get(self, url, params=None, timeout=None, **kwargs):
+    t = timeout if isinstance(timeout, (int, float)) else 15
+    return _curl_request(url, params=params, timeout=t)
+
+requests.sessions.Session.get = _patched_session_get
+
+# ===== 现在导入 akshare（会用上面的 curl 替代）=====
 
 import akshare as ak
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import warnings
-import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-import sys
-
-warnings.filterwarnings("ignore")
 
 
 def calc_kdj(df: pd.DataFrame, n: int = 9):
