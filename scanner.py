@@ -20,30 +20,38 @@ def _curl_request(url: str, params: dict = None, timeout: int = 15) -> "FakeResp
         full_url = f"{url}?{query}"
 
     # 构建 User-Agent 和 headers
-    cmd = [
-        "curl", "-s", "-m", str(timeout),
-        "-H", "Accept: */*",
-        "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "-H", "Accept-Language: zh-CN,zh;q=0.9",
-        "--compressed",
-        full_url
-    ]
+    import time as _time
+    last_err = "unknown"
+    for attempt in range(3):
+        cmd = [
+            "curl", "-s", "-m", str(timeout),
+            "--tlsv1.2",  # 强制 TLS 1.2，避免 TLS 1.3 握手问题
+            "--retry", "2", "--retry-delay", "2",
+            "-H", "Accept: */*",
+            "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "-H", "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
+            "--compressed",
+            full_url
+        ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10)
 
-    class FakeResponse:
-        def __init__(self, text, status_code):
-            self.text = text
-            self.status_code = status_code
-            self._text = text
+        class FakeResponse:
+            def __init__(self, text, status_code):
+                self.text = text
+                self.status_code = status_code
+                self._text = text
 
-        def json(self):
-            return json.loads(self.text)
+            def json(self):
+                return json.loads(self.text)
 
-    if result.returncode == 0 and result.stdout.strip():
-        return FakeResponse(result.stdout, 200)
-    else:
-        raise ConnectionError(f"curl failed: {result.stderr[:200]}")
+        if result.returncode == 0 and result.stdout.strip():
+            return FakeResponse(result.stdout, 200)
+        last_err = result.stderr[:200] if result.stderr else f"empty output (rc={result.returncode})"
+        if attempt < 2:
+            _time.sleep(2 * (attempt + 1))  # 2, 4 秒退避
+
+    raise ConnectionError(f"curl failed after 3 retries: {last_err}")
 
 # Monkey-patch requests 模块，让 akshare 走 curl
 import requests
